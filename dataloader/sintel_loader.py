@@ -21,7 +21,7 @@ def dataloader(filepath, left_dir,right_dir):
 
   # test_fold = 'clean_left_flatten_testing/'
 
-  image = [img for img in os.listdir(filepath+right_dir)]
+  image = [img for img in os.listdir(filepath+right_dir) if is_image_file(img)]
 
 
   # left_test  = [filepath+left_fold+img.replace('_R_','_').replace('.png','_1100_maskImg.png') for img in image]

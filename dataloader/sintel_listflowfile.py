@@ -30,7 +30,7 @@ def dataloader(root, left_img_dir, right_img_dir, disp_dir,filenames=None,clean=
     test_right_img_filelist =  [os.path.join(right_img_dir,img)  for img in filenames]
  else:
     # test_right_img_filelist  = itemgetter(*inds)(right_img_filelist)
-    test_right_img_filelist  = [os.path.join(test_right_img_dir ,img)  for img in os.listdir(test_right_img_dir)]
+    test_right_img_filelist  = [os.path.join(test_right_img_dir ,img)  for img in os.listdir(test_right_img_dir) if img.endswith('.png')]
  # train_right_img_filelist = [img for img in right_img_filelist if img not in test_right_img_filelist]
  train_right_img_filelist = [img for img in right_img_filelist if img.endswith('.png') or img.endswith('.tif')]
 

@@ -6,6 +6,7 @@ from torch.autograd import Variable
 import torch.nn.functional as F
 import math
 from submodule import *
+from dfd import Dfd_net
 
 class hourglass(nn.Module):
     def __init__(self, inplanes):
@@ -50,20 +51,27 @@ class hourglass(nn.Module):
         return out, pre, post
 
 class PSMNet(nn.Module):
-    def __init__(self, maxdisp):
+    def __init__(self, maxdisp, dfd_net = True, dfd_at_end=True, device=None):
         super(PSMNet, self).__init__()
         self.maxdisp = maxdisp
+        self.dfd_net = dfd_net
+        self.dfd_at_end = dfd_at_end
+
+        if self.dfd_net and not self.dfd_at_end:
+            features = 66
+        else:
+            features = 64
 
         self.feature_extraction = feature_extraction()
 
-        self.dres0 = nn.Sequential(convbn_3d(64, 32, 3, 1, 1),
-                                     nn.ReLU(inplace=True),
-                                     convbn_3d(32, 32, 3, 1, 1),
-                                     nn.ReLU(inplace=True))
+        self.dres0 = nn.Sequential(convbn_3d(features, 32, 3, 1, 1),
+                                   nn.ReLU(inplace=True),
+                                   convbn_3d(32, 32, 3, 1, 1),
+                                   nn.ReLU(inplace=True))
 
         self.dres1 = nn.Sequential(convbn_3d(32, 32, 3, 1, 1),
                                    nn.ReLU(inplace=True),
-                                   convbn_3d(32, 32, 3, 1, 1)) 
+                                   convbn_3d(32, 32, 3, 1, 1))
 
         self.dres2 = hourglass(32)
 
@@ -82,6 +90,7 @@ class PSMNet(nn.Module):
         self.classif3 = nn.Sequential(convbn_3d(32, 32, 3, 1, 1),
                                       nn.ReLU(inplace=True),
                                       nn.Conv3d(32, 1, kernel_size=3, padding=1, stride=1,bias=False))
+        self.last_conv = nn.Conv2d(2,1,1)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -99,13 +108,45 @@ class PSMNet(nn.Module):
             elif isinstance(m, nn.Linear):
                 m.bias.data.zero_()
 
+        # self.last_conv.weight.data = torch.Tensor([[[[0.5]],[[0.5]]]])
+
+        if self.dfd_net:
+            if self.dfd_at_end:
+                self.dfd = Dfd_net(mode='segmentation', target_mode='cont', pool=False)
+            else:
+                self.dfd = Dfd_net(mode='segmentation', target_mode='cont', pool=True)
+            self.dfd.to(device)
+            model_path = 'models/dfd_checkpoint/checkpoint_274.pth.tar'
+            print("loading checkpoint for dfd net")
+            checkpoint = torch.load(model_path, map_location=device)
+            self.dfd.load_state_dict(checkpoint['state_dict'], strict=True)
+            #Freeze the net if at features level
+            if not self.dfd_at_end:
+                print("Freezing dfd net")
+                for child in self.dfd.children():
+                    for param in child.parameters():
+                        param.requires_grad = False
+
 
     def forward(self, left, right):
 
         refimg_fea     = self.feature_extraction(left)
         targetimg_fea  = self.feature_extraction(right)
 
+        if self.dfd_net:
+            dfd_left_out = self.dfd(left)
+            dfd_right_out = self.dfd(right)
+            import matplotlib.pyplot as plt
+            # plt.subplot(2,1,1)
+            # plt.imshow(np.transpose(((left[0]+1)/2).detach().cpu().numpy(), (1,2,0)))
+            # plt.subplot(2, 1, 2)
+            # plt.imshow(dfd_left_out[0].cpu())
+            # plt.show()
 
+
+            if not self.dfd_at_end:
+                refimg_fea = torch.cat((refimg_fea, dfd_left_out), dim=1)
+                targetimg_fea = torch.cat((targetimg_fea, dfd_right_out), dim=1)
         #matching
         cost = Variable(torch.FloatTensor(refimg_fea.size()[0], refimg_fea.size()[1]*2, self.maxdisp/4,  refimg_fea.size()[2],  refimg_fea.size()[3]).zero_()).cuda()
 
@@ -135,22 +176,25 @@ class PSMNet(nn.Module):
         cost3 = self.classif3(out3) + cost2
 
         if self.training:
-		cost1 = F.upsample(cost1, [self.maxdisp,left.size()[2],left.size()[3]], mode='trilinear')
-		cost2 = F.upsample(cost2, [self.maxdisp,left.size()[2],left.size()[3]], mode='trilinear')
+            cost1 = F.upsample(cost1, [self.maxdisp,left.size()[2],left.size()[3]], mode='trilinear', align_corners=True)
+            cost2 = F.upsample(cost2, [self.maxdisp,left.size()[2],left.size()[3]], mode='trilinear', align_corners=True)
 
-		cost1 = torch.squeeze(cost1,1)
-		pred1 = F.softmax(cost1,dim=1)
-		pred1 = disparityregression(self.maxdisp)(pred1)
+            cost1 = torch.squeeze(cost1,1)
+            pred1 = F.softmax(cost1,dim=1)
+            pred1 = disparityregression(self.maxdisp)(pred1)
 
-		cost2 = torch.squeeze(cost2,1)
-		pred2 = F.softmax(cost2,dim=1)
-		pred2 = disparityregression(self.maxdisp)(pred2)
+            cost2 = torch.squeeze(cost2,1)
+            pred2 = F.softmax(cost2,dim=1)
+            pred2 = disparityregression(self.maxdisp)(pred2)
 
-        cost3 = F.upsample(cost3, [self.maxdisp,left.size()[2],left.size()[3]], mode='trilinear')
+        cost3 = F.upsample(cost3, [self.maxdisp,left.size()[2],left.size()[3]], mode='trilinear', align_corners=True)
         cost3 = torch.squeeze(cost3,1)
         pred3 = F.softmax(cost3,dim=1)
         pred3 = disparityregression(self.maxdisp)(pred3)
-
+        # pred3 = torch.unsqueeze(pred3,dim=1)
+        # dfd_left_out = F.upsample(dfd_left_out, scale_factor=4)
+        # pred4 = torch.cat((pred3, dfd_left_out), dim=1)
+        # pred4 = self.last_conv(pred4)
         if self.training:
             return pred1, pred2, pred3
         else:

@@ -1,6 +1,16 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
+
+def psi_to_depth(psi, focal_point=1.1, params=None):
+    Zn = focal_point
+    Lambda = params['Lambda'] if params else (455*1e-9)
+    D = params['D'] if params else (2.28*1e-3)
+    r = D / 2
+    pi = math.pi
+    Zo = (1 / ((1/Zn) + ((psi * Lambda) / (pi * r**2))))
+    return Zo
 
 class Dfd_net(nn.Module):
     def __init__(self, target_mode=None, num_class=16, mode='classification',skip_layer=True,pool=True):
@@ -66,6 +76,7 @@ class Dfd_net(nn.Module):
                 x = self.conv8_reg(x)
                 if self.pool:
                     x = F.avg_pool2d(x, 4)
+                    x = psi_to_depth(x)
                 else:
                     x = torch.squeeze(x)
         else:

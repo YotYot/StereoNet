@@ -3,10 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
-def psi_to_depth(psi, focal_point=1.1, params=None):
+def psi_to_depth(psi, focal_point=0.7, Lambda=None, D=None):
     Zn = focal_point
-    Lambda = params['Lambda'] if params else (455*1e-9)
-    D = params['D'] if params else (2.28*1e-3)
+    Lambda = Lambda if Lambda else (455*1e-9)
+    D = D if D else (2.28*1e-3)
     r = D / 2
     pi = math.pi
     Zo = (1 / ((1/Zn) + ((psi * Lambda) / (pi * r**2))))
@@ -38,8 +38,10 @@ class Dfd_net(nn.Module):
         self.upsampling16 = nn.ConvTranspose2d(in_channels=num_class, out_channels=num_class, kernel_size=32,stride=16)
         self.conv9_from_pool3 = nn.Conv2d(64, num_class, kernel_size=1)
         self.upsampling8 = nn.ConvTranspose2d(in_channels=num_class, out_channels=num_class, kernel_size=16, stride=8)
-        self.conv8_reg = nn.Conv2d(16,1,1,1)
+        self.conv8_reg = nn.Conv2d(16,1,1,1, bias=False)
         self.conv8_reg.weight.data[0,:,0,0] = torch.arange(16).float()
+        for param in self.conv8_reg.parameters():
+            param.requires_grad = False
         self.softmax = nn.Softmax()
         self.num_class = num_class
         self.mode = mode
@@ -48,7 +50,7 @@ class Dfd_net(nn.Module):
         self.pool = pool
 
 
-    def forward(self, x):
+    def forward(self, x,focal_point=0.7,D=2.28*1e-3):
         x = self.conv1(x)
         x = self.batch_norm1(x)
         x = F.relu(x)
@@ -73,13 +75,17 @@ class Dfd_net(nn.Module):
                 x = x + skip_upsampled + skip_upsampled8
             if self.target_mode == 'cont':
                 x = self.softmax(x)
+                conf = x
                 x = self.conv8_reg(x)
+                #TODO - Try clamp to 1-15
+                # x = torch.clamp(x, 1,15)
+                import matplotlib.pyplot as plt
+                x = psi_to_depth(x-5,focal_point=focal_point, D=D)
                 if self.pool:
                     x = F.avg_pool2d(x, 4)
-                    x = psi_to_depth(x)
                 else:
                     x = torch.squeeze(x)
         else:
             x = x.view(-1, self.num_class)
             # x = self.upsampling8(x)[:,:,4:-4,4:-4]
-        return x
+        return x, conf

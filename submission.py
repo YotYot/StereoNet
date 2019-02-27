@@ -49,6 +49,9 @@ parser.add_argument('--dfd', action='store_true', default=False,
                     help='include dfd net')
 parser.add_argument('--dfd_at_end', action='store_true', default=False,
                     help='include dfd net')
+parser.add_argument('--right_head', action='store_true', default=False,
+                    help='add right disparity head')
+
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 
@@ -65,9 +68,9 @@ import sintel_loader as DA
 
 test_left_img, test_right_img = DA.dataloader(args.datapath, args.left_dir, args.right_dir)
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 if args.model == 'stackhourglass':
-    model = stackhourglass(args.maxdisp, device=device, dfd_net=args.dfd, dfd_at_end=args.dfd_at_end)
+    model = stackhourglass(args.maxdisp, device=device, dfd_net=args.dfd, dfd_at_end=args.dfd_at_end, right_head=args.right_head)
 elif args.model == 'basic':
     model = basic(args.maxdisp)
 else:
@@ -92,11 +95,12 @@ def test(imgL,imgR):
         imgL, imgR= Variable(imgL), Variable(imgR)
 
         with torch.no_grad():
-            output = model(imgL,imgR)
-        output = torch.squeeze(output)
+            output,output_R = model(imgL,imgR)
+        output,output_R = torch.squeeze(output),torch.squeeze(output_R)
         pred_disp = output.data.cpu().numpy()
+        pred_R_disp = output_R.data.cpu().numpy()
 
-        return pred_disp
+        return pred_disp,pred_R_disp
 
 
 def main():
@@ -124,7 +128,7 @@ def main():
 
        start_time = time.time()
        with torch.no_grad():
-            pred_disp = test(imgL,imgR)
+            pred_disp, pred_R_disp = test(imgL,imgR)
        print('time = %.2f' %(time.time() - start_time))
 
        top_pad   = 512-imgL_o.shape[0]
@@ -134,7 +138,9 @@ def main():
        # file_splits = test_left_img[inx].split('/')[-1].split("_frame_")
        # a = plt.imread(os.path.join(disparity_dir, file_splits[0],'frame_' + file_splits[1]))
        img = pred_disp[top_pad:,:]
+       imgR = pred_R_disp[top_pad:,:]
        img = 1 / img
+       imgR = 1 / imgR
        # plt.figure(1)
        # plt.subplot(1,2,1)
        # plt.imshow(img)
@@ -145,6 +151,7 @@ def main():
        if not os.path.isdir(outdir):
            os.makedirs(outdir)
        plt.imsave(os.path.join(outdir, test_left_img[inx].split('/')[-1]), (img*256).astype('uint16'), cmap='jet')
+       plt.imsave(os.path.join(outdir, 'R_'+test_left_img[inx].split('/')[-1]), (imgR*256).astype('uint16'), cmap='jet')
        # plt.imsave(os.path.join(outdir, test_left_img[inx].split('/')[-1]), (img*256).astype('uint16'),cmap='gray')
        # skimage.io.imsave(test_left_img[inx].split('/')[-1],(img*256).astype('uint16'))
 

@@ -8,6 +8,30 @@ from PIL import Image
 import sintel_io
 from sintel_io import depth_read
 import cv2
+import torch
+
+def depth2disparity(img, depth, device):
+    imSz = torch.Tensor([img.shape])[0]
+    f = 24.0  # focal length in mm
+    sensor_w = 32.0  # Sensor width in mm
+    num_of_pixels = 512  # number of pixels in horizontal direction
+    pixel_sz = sensor_w / num_of_pixels
+    B = 100  # distance between the two sensors in mm
+    cnt = (torch.floor(imSz / 2) + 1)
+    xi = torch.arange(imSz[2]) - cnt[2]
+    yi = torch.arange(imSz[3]) - cnt[3]
+    Xi, Yi = torch.meshgrid([xi, yi])
+    Ri = pixel_sz * torch.sqrt((Xi ** 2) + (Yi ** 2) + (f / pixel_sz) ** 2)
+    Ri = torch.unsqueeze(Ri, 0).repeat(img.shape[0], 1, 1)
+    f_Ri = (f / Ri).to(device)
+    calc_depth = depth * 1e3 * f_Ri
+    disp = ((B * f) / calc_depth) // pixel_sz
+    return disp
+
+def load_model(model, device, model_path):
+    print("loading checkpoint from: ", model_path)
+    checkpoint = torch.load(model_path, map_location=device)
+    model.load_state_dict(checkpoint['state_dict'], strict=False)
 
 def noisy(image, sigma=0.0235):
     row, col, ch = image.shape
@@ -101,19 +125,29 @@ def get_depth_histogram(depth_dir):
 
 def move_same(src_dir, dst_dir):
     for img in os.listdir(src_dir):
-        img = img.replace('.tif', '_1100_maskImg.png')
-        img_path = os.path.join(dst_dir, img)
-        new_img_dir = os.path.join(dst_dir, 'val')
-        new_img_path = os.path.join(new_img_dir,img)
-        if not os.path.isdir(new_img_dir):
-            os.makedirs(new_img_dir)
-        shutil.move(img_path, new_img_path)
+        # img = img.replace('.tif', '_1100_maskImg.png')
+        if img.endswith('.png') or img.endswith('.tif'):
+            img = img.replace('.tif', '_1500_maskImg.png')
+            img_path = os.path.join(dst_dir, img)
+            new_img_dir = os.path.join(dst_dir, 'val')
+            new_img_path = os.path.join(new_img_dir,img)
+            if not os.path.isdir(new_img_dir):
+                os.makedirs(new_img_dir)
+            shutil.move(img_path, new_img_path)
 
 
 def example():
-    mv_percent_for_testing('/media/yotamg/bd0eccc9-4cd5-414c-b764-c5a7890f9785/Yotam/Stereo/Tau_right_images/right_images_clean/', '/media/yotamg/bd0eccc9-4cd5-414c-b764-c5a7890f9785/Yotam/Stereo/Tau_right_images/right_images_clean/val', 20)
-    move_same('/media/yotamg/bd0eccc9-4cd5-414c-b764-c5a7890f9785/Yotam/Tau-agent/Right_images/right_images_clean/val', '/media/yotamg/bd0eccc9-4cd5-414c-b764-c5a7890f9785/Yotam/Stereo/Tau_right_images/right_images_filtered')
-    move_same('/media/yotamg/bd0eccc9-4cd5-414c-b764-c5a7890f9785/Yotam/Tau-agent/Right_images/right_images_clean/val', '/media/yotamg/bd0eccc9-4cd5-414c-b764-c5a7890f9785/Yotam/Stereo/Tau_right_images/right_images_no_phase')
+    # dir = '/media/yotamg/bd0eccc9-4cd5-414c-b764-c5a7890f9785/Yotam/Tau-agent/oof_flatten'
+    # for file in os.listdir(dir):
+    #     filepath = os.path.join(dir, file)
+    #     os.rename(filepath, filepath.replace('_L',''))
+
+    # flatten_dir(
+    #     '/media/yotamg/bd0eccc9-4cd5-414c-b764-c5a7890f9785/Yotam/Tau-Stereo_orig_structure/Headbutt_L/Occlusions',
+    #     '/media/yotamg/bd0eccc9-4cd5-414c-b764-c5a7890f9785/Yotam/Tau-agent/occ_flatten')
+    # mv_percent_for_testing('/media/yotamg/bd0eccc9-4cd5-414c-b764-c5a7890f9785/Yotam/Stereo/Tau_right_images/right_images_clean/', '/media/yotamg/bd0eccc9-4cd5-414c-b764-c5a7890f9785/Yotam/Stereo/Tau_right_images/right_images_clean/val', 20)
+    # move_same('/media/yotamg/bd0eccc9-4cd5-414c-b764-c5a7890f9785/Yotam/Tau-agent/right_images/right_images_filtered/val', '/media/yotamg/bd0eccc9-4cd5-414c-b764-c5a7890f9785/Yotam/Stereo/Tau_right_images/right_images_clean')
+    move_same('/media/yotamg/bd0eccc9-4cd5-414c-b764-c5a7890f9785/Yotam/Tau-agent/right_images/right_images_clean/val', '/media/yotamg/bd0eccc9-4cd5-414c-b764-c5a7890f9785/Yotam/Stereo/Tau_right_images/dn1500_D5/rgb')
 
 
 if __name__ == '__main__':
